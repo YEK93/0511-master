@@ -4,6 +4,8 @@ from flask import g
 import os
 import uuid
 DATABASE = 'database.db'
+import hashlib
+
 UPLOAD_FOLDER = 'static/images/'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg'}
 
@@ -30,6 +32,9 @@ def allowed_file(filename):
         x=filename.rsplit('.', 1)[1].lower()
     return x
 
+def sha256(data):
+    return hashlib.sha256(data.encode('utf-8')).hexdigest()
+
 @app.route("/")
 def hello_python():
     return "<p>Hello, python!</p>"
@@ -37,7 +42,7 @@ def hello_python():
 @app.route("/name/<name>")
 def name(name):
     print('Type:',type(name))
-    return name
+    return sha256(name)
 
 @app.route("/number/<int:number>")
 def number(number):
@@ -57,6 +62,7 @@ def login():
         type = '登入失敗'
         name = request.form.get('email')
         password = request.form.get('password')
+        password = sha256(password)
         with get_db() as cur:
             cur.row_factory = sql.Row
             cur = cur.cursor()
@@ -95,6 +101,7 @@ def createuser():
     if name == '':name = 'User'
     account = request.form.get('account')
     password = request.form.get('password')
+    password = sha256(password)
     with get_db() as cur:
         cur.row_factory = sql.Row
         cur = cur.cursor()
@@ -109,10 +116,11 @@ def edit(id):
         name = request.form.get('username')
         account = request.form.get('account')
         password = request.form.get('password')
+        password = sha256(password)
         with get_db() as cur:
             cur.row_factory = sql.Row
             cur = cur.cursor()
-            cur.execute(f'select * from Users ')
+            cur.execute(f"UPDATE Users SET name='{ name }',account='{ account }',password='{ password }' WHERE id='{id}';")
             data = cur.fetchone()
             cur.close()
         flash('修改成功')
@@ -150,9 +158,67 @@ def upload():
             type = '副檔名不符'
         else:
             type='新增成功'
+            with get_db() as cur:
+                cur.row_factory = sql.Row
+                cur = cur.cursor()
+                data = cur.execute(f" select "" from Pictures ")
+                order = 0
+                for i in data:
+                    if i['p_order'] > order:
+                        order = i['p_order']
+                cur.execute(f"INSERT INTO Pictures (p_name,p_order) VALUES ('{name}',{order+1});")
+                cur.close()
             f.save(os.path.join(app.config['UPLOAD_FOLDER'], name))
         return render_template("upload.html",type=type)
     return render_template("upload.html")
+
+@app.route("/show")
+def show():
+    with get_db() as cur:
+        cur.row_factory = sql.Row
+        cur = cur.cursor()
+        cur.execute('select * from Pictures order by p_order')
+        data = cur.fetchall()
+        cur.close()
+    return render_template("show.html",data=data)
+
+@app.route("/pictures")
+def pictures():
+    with get_db() as cur:
+        cur.row_factory = sql.Row
+        cur = cur.cursor()
+        cur.execute('select * from Pictures order by p_order')
+        data = cur.fetchall()
+        length = len(data)
+        for i in data:
+            if i['p_order'] > length:
+                length = i['p_order']
+        cur.close()
+    return render_template("pictures.html",data=data,len = length)
+
+@app.route("/manager_pictures",methods=["POST"])
+def manager_pictures():
+    id = request.form.get('id')
+    fun = request.form.get('fun')
+    if fun == "修改":
+        p_order = request.form.get('p_order')
+        with get_db() as cur:
+            cur.row_factory = sql.Row
+            cur = cur.cursor()
+            cur.execute(f"UPDATE Pictures SET p_order='{ p_order }' WHERE id='{id}';")
+            cur.close()
+        flash('修改成功')
+    else:
+        p_name = request.form.get('p_name')
+        os.remove(os.path.join(app.config['UPLOAD_FOLDER'], p_name))
+        with get_db() as cur:
+            cur.row_factory = sql.Row
+            cur = cur.cursor()
+            cur.execute(f"DELETE FROM Pictures WHERE id='{id}';")
+            cur.close()
+        flash('刪除成功')
+    return redirect(url_for('pictures'))
+
 
 if __name__ =="__main__":
     app.secret_key = "Your Key"
